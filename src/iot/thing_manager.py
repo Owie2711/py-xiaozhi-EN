@@ -26,6 +26,20 @@ class ThingManager:
 
         注意：倒计时器功能已迁移到MCP工具中，提供更好的AI集成和状态反馈。
         """
+        # Load configuration to decide whether to expose virtual devices to the AI
+        try:
+            from src.utils.config_manager import ConfigManager
+
+            cfg = ConfigManager.get_instance()
+            enable_virtual = bool(cfg.get_config("IOT.ENABLE_VIRTUAL_DEVICES", False))
+        except Exception:
+            enable_virtual = False
+
+        if not enable_virtual:
+            # Virtual/testing devices disabled by config; do not register them.
+            logger.info("虚拟物联网设备已禁用（IOT.ENABLE_VIRTUAL_DEVICES=False）")
+            return
+
         from src.iot.things.lamp import Lamp
 
         # 添加设备
