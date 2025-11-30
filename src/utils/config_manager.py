@@ -75,6 +75,10 @@ class ConfigManager:
             "input_channels": None,
             "output_channels": None,
         },
+        "WEBHOOKS": {
+            "on_listening_start": "",
+            "on_listening_stop": ""
+        },
     }
 
     def __new__(cls):

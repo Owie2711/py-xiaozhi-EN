@@ -39,6 +39,10 @@ from src.protocols.websocket_protocol import WebsocketProtocol
 from src.utils.config_manager import ConfigManager
 from src.utils.logging_config import get_logger
 from src.utils.opus_loader import setup_opus
+import json
+import time
+import urllib.request
+import urllib.error
 
 logger = get_logger(__name__)
 setup_opus()
@@ -416,6 +420,8 @@ class Application:
         async with self._state_lock:
             if self.device_state == state:
                 return
+            # capture previous state for stop webhook detection
+            prev_state = self.device_state
             logger.info(f"设置设备状态: {state}")
             self.device_state = state
             # cancel any existing auto-stop task when state changes
@@ -427,6 +433,46 @@ class Application:
         # 锁外广播，避免插件回调引起潜在的长耗时阻塞
         try:
             await self.plugins.notify_device_state_changed(state)
+
+            # Webhook notifications (non-blocking): call configured URLs
+            try:
+                # on_listening_start
+                if state == DeviceState.LISTENING:
+                    start_url = self.config.get_config("WEBHOOKS.on_listening_start", "")
+                    if start_url:
+                        async def _invoke_webhook_start(url: str):
+                            try:
+                                def _do():
+                                    req = urllib.request.Request(url, data=b"", method="POST")
+                                    with urllib.request.urlopen(req, timeout=5) as resp:
+                                        _ = resp.read(1024)
+
+                                await asyncio.to_thread(_do)
+                            except Exception:
+                                logger.debug("Webhook start failed for %s", url, exc_info=True)
+
+                        self.spawn(_invoke_webhook_start(start_url), name="webhook:on_listening_start")
+
+                # on_listening_stop (previously listening -> now not listening)
+                if 'prev_state' in locals() and prev_state == DeviceState.LISTENING and state != DeviceState.LISTENING:
+                    stop_url = self.config.get_config("WEBHOOKS.on_listening_stop", "")
+                    if stop_url:
+                        async def _invoke_webhook_stop(url: str):
+                            try:
+                                def _do():
+                                    req = urllib.request.Request(url, data=b"", method="POST")
+                                    with urllib.request.urlopen(req, timeout=5) as resp:
+                                        _ = resp.read(1024)
+
+                                await asyncio.to_thread(_do)
+                            except Exception:
+                                logger.debug("Webhook stop failed for %s", url, exc_info=True)
+
+                        self.spawn(_invoke_webhook_stop(stop_url), name="webhook:on_listening_stop")
+            except Exception:
+                # swallow webhook errors to avoid impacting device state flow
+                logger.debug("Webhook invocation encountered an error", exc_info=True)
+
             if state == DeviceState.LISTENING:
                 # Play a short 'ready' SFX to indicate listening started.
                 try:
