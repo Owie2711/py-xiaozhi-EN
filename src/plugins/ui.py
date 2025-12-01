@@ -64,7 +64,49 @@ class UIPlugin(Plugin):
         await self._setup_callbacks()
 
         # 启动显示
+        # 启动显示（后台任务）
         self.app.spawn(self.display.start(), name=f"ui:{self.mode}:start")
+
+        # 在显示启动后，主动发送一次初始状态到显示层，确保 GUI 启动时反映应用的实际状态
+        # 这是为了解决启动广播可能在 UI 完成初始化前发生，从而导致显示仍然显示默认的 "Disconnected" 文本的问题。
+        try:
+            self.app.spawn(self._apply_initial_display_state(), name=f"ui:{self.mode}:initial_state")
+        except Exception:
+            # 忽略调度错误，不要阻塞启动流程
+            pass
+
+    async def _apply_initial_display_state(self) -> None:
+        """
+        等待短暂时间以确保 GUI 完成启动，然后将当前应用的 device state 发送到 display。
+        将 self.is_first 置为 False 以避免 on_device_state_changed 再跳过下一次更新。
+        """
+        try:
+            # 短暂延迟以让 display.start() 完成其同步初始化
+            import asyncio
+
+            await asyncio.sleep(0.15)
+
+            # 读取当前应用状态并映射为可见文本
+            state = getattr(self.app, "device_state", None)
+            status_text = self.STATE_TEXT_MAP.get(state)
+
+            # 保证表情为 neutral
+            try:
+                await self.display.update_emotion("neutral")
+            except Exception:
+                pass
+
+            if status_text:
+                try:
+                    await self.display.update_status(status_text, True)
+                except Exception:
+                    pass
+
+            # 不再跳过后续的第一个广播（我们已主动发送初始状态）
+            self.is_first = False
+        except Exception:
+            # 容错：不抛出异常
+            return
 
     async def _setup_callbacks(self) -> None:
         """
